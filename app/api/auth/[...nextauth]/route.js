@@ -18,33 +18,23 @@ export const authOptions = {
         }
 
         const lowerEmail = credentials.email.toLowerCase().trim();
-        const db = await connectDB();
+        await connectDB();
 
-        let userFound = null;
+        const user = await User.findOne({ email: lowerEmail });
 
-        if (db && db.isFallback) {
-          userFound = global.inMemoryDb.users.find((u) => u.email === lowerEmail);
-        } else {
-          try {
-            userFound = await User.findOne({ email: lowerEmail });
-          } catch (e) {
-            userFound = global.inMemoryDb.users.find((u) => u.email === lowerEmail);
-          }
-        }
-
-        if (!userFound || !userFound.isActive) {
+        if (!user || !user.isActive) {
           throw new Error('Invalid email or password');
         }
 
-        const isPasswordValid = await bcrypt.compare(credentials.password, userFound.passwordHash);
+        const isPasswordValid = await bcrypt.compare(credentials.password, user.passwordHash);
         if (!isPasswordValid) {
           throw new Error('Invalid email or password');
         }
 
         return {
-          id: userFound._id ? userFound._id.toString() : 'demo_id',
-          email: userFound.email,
-          name: userFound.name,
+          id: user._id.toString(),
+          email: user.email,
+          name: user.name,
         };
       },
     }),
@@ -70,7 +60,7 @@ export const authOptions = {
     signIn: '/login',
     signUp: '/signup',
   },
-  secret: process.env.NEXTAUTH_SECRET || 'development_nextauth_secret_key_32bytes_long!!',
+  secret: process.env.NEXTAUTH_SECRET || '2b3eb9469d29fba7fc7bd1d8d56ebb6a',
 };
 
 const handler = NextAuth(authOptions);

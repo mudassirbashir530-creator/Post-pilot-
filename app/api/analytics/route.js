@@ -16,63 +16,50 @@ export async function GET(req) {
     }
 
     const userId = session.user.id;
-    const db = await connectDB();
+    await connectDB();
 
-    let accounts = [];
-    let analyticsHistory = [];
-    let recentPosts = [];
-    let recentComments = [];
+    // 1. Security Rule: Every query MUST include userId
+    const accounts = await SocialAccount.find({ userId, isValid: true }).select('+accessToken');
 
-    if (db && db.isFallback) {
-      accounts = (global.inMemoryDb.socialAccounts || []).filter(
-        (a) => a.userId === userId && a.isValid
-      );
-      recentPosts = (global.inMemoryDb.posts || []).filter((p) => p.userId === userId).slice(-10);
-      recentComments = (global.inMemoryDb.commentReplies || []).filter((c) => c.userId === userId).slice(-5);
-      analyticsHistory = (global.inMemoryDb.analytics || []).filter((an) => an.userId === userId);
-    } else {
-      accounts = await SocialAccount.find({ userId, isValid: true }).select('+accessToken');
+    // Sync live insights from Meta Graph API for each connected account
+    for (const account of accounts) {
+      try {
+        const decryptedToken = decrypt(account.accessToken);
+        const insights = await fetchMetaInsights(account.pageId, account.platform, decryptedToken);
 
-      // Sync live insights from Meta Graph API for each connected account
-      for (const account of accounts) {
-        try {
-          const decryptedToken = decrypt(account.accessToken);
-          const insights = await fetchMetaInsights(account.pageId, account.platform, decryptedToken);
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
 
-          const today = new Date();
-          today.setHours(0, 0, 0, 0);
-
-          await Analytics.findOneAndUpdate(
-            { userId, platform: account.platform, date: today },
-            {
-              userId,
-              platform: account.platform,
-              date: today,
-              metrics: insights,
-            },
-            { upsert: true, new: true }
-          );
-        } catch (err) {
-          console.error(`Error syncing analytics for ${account.platform}:`, err.message);
-        }
+        await Analytics.findOneAndUpdate(
+          { userId, platform: account.platform, date: today },
+          {
+            userId,
+            platform: account.platform,
+            date: today,
+            metrics: insights,
+          },
+          { upsert: true, new: true }
+        );
+      } catch (err) {
+        console.error(`Error syncing analytics for ${account.platform}:`, err.message);
       }
-
-      const sevenDaysAgo = new Date();
-      sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
-
-      analyticsHistory = await Analytics.find({
-        userId,
-        date: { $gte: sevenDaysAgo },
-      }).sort({ date: 1 });
-
-      recentPosts = await Post.find({ userId })
-        .sort({ uploadedAt: -1 })
-        .limit(10);
-
-      recentComments = await CommentReply.find({ userId })
-        .sort({ createdAt: -1 })
-        .limit(5);
     }
+
+    const sevenDaysAgo = new Date();
+    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+
+    const analyticsHistory = await Analytics.find({
+      userId,
+      date: { $gte: sevenDaysAgo },
+    }).sort({ date: 1 });
+
+    const recentPosts = await Post.find({ userId })
+      .sort({ uploadedAt: -1 })
+      .limit(10);
+
+    const recentComments = await CommentReply.find({ userId })
+      .sort({ createdAt: -1 })
+      .limit(5);
 
     let totalFollowers = 0;
     let totalLikes = 0;
@@ -121,7 +108,7 @@ export async function GET(req) {
         totalReach,
         totalImpressions,
         totalEngagement,
-        engagementRate: totalImpressions > 0 ? parseFloat(((totalEngagement / totalImpressions) * 100).toFixed(2)) : 5.2,
+        engagementRate: totalImpressions > 0 ? parseFloat(((totalEngagement / totalImpressions) * 100).toFixed(2)) : 0,
       },
       chartData,
       recentPosts,

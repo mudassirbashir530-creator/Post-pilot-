@@ -20,44 +20,9 @@ export async function POST(req) {
     const { name, email, password } = validation.data;
     const lowerEmail = email.toLowerCase().trim();
 
-    const db = await connectDB();
+    await connectDB();
 
-    // In-Memory Fallback DB Path
-    if (db && db.isFallback) {
-      const existingUser = global.inMemoryDb.users.find((u) => u.email === lowerEmail);
-      if (existingUser) {
-        return NextResponse.json(
-          { error: 'An account with this email address already exists' },
-          { status: 400 }
-        );
-      }
-
-      const passwordHash = await bcrypt.hash(password, 10);
-      const newUser = {
-        _id: 'user_' + Date.now(),
-        name,
-        email: lowerEmail,
-        passwordHash,
-        isActive: true,
-        createdAt: new Date(),
-      };
-
-      global.inMemoryDb.users.push(newUser);
-
-      return NextResponse.json(
-        {
-          message: 'Account created successfully',
-          user: {
-            id: newUser._id,
-            name: newUser.name,
-            email: newUser.email,
-          },
-        },
-        { status: 201 }
-      );
-    }
-
-    // Mongoose DB Path
+    // 2. Check for existing user in MongoDB Atlas
     const existingUser = await User.findOne({ email: lowerEmail });
     if (existingUser) {
       return NextResponse.json(
@@ -66,6 +31,7 @@ export async function POST(req) {
       );
     }
 
+    // 3. Hash Password & Create User in MongoDB Atlas
     const passwordHash = await bcrypt.hash(password, 10);
     const newUser = await User.create({
       name,

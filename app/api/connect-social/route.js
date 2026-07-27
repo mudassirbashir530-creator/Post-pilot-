@@ -16,7 +16,8 @@ export async function GET(req) {
     const platform = searchParams.get('platform') || 'facebook';
 
     const userId = session.user.id;
-    const authUrl = getMetaOAuthUrl(userId, platform);
+    const originUrl = req.headers.get('origin') || req.headers.get('host') ? `${req.headers.get('x-forwarded-proto') || 'https'}://${req.headers.get('host')}` : null;
+    const authUrl = getMetaOAuthUrl(userId, platform, originUrl);
 
     return NextResponse.json({ url: authUrl });
   } catch (error) {
@@ -34,17 +35,12 @@ export async function POST(req) {
     }
 
     const userId = session.user.id;
-    const db = await connectDB();
+    await connectDB();
     
-    let accounts = [];
-
-    if (db && db.isFallback) {
-      accounts = (global.inMemoryDb.socialAccounts || []).filter((a) => a.userId === userId);
-    } else {
-      accounts = await SocialAccount.find({ userId })
-        .select('-accessToken')
-        .sort({ connectedAt: -1 });
-    }
+    // Security Rule: Every query MUST include userId
+    const accounts = await SocialAccount.find({ userId })
+      .select('-accessToken')
+      .sort({ connectedAt: -1 });
 
     return NextResponse.json({ accounts });
   } catch (error) {

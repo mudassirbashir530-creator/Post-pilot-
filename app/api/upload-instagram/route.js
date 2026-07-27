@@ -10,9 +10,7 @@ import fs from 'fs';
 import path from 'path';
 import os from 'os';
 
-const NEXTAUTH_URL = process.env.NEXTAUTH_URL || 'http://localhost:3000';
-
-async function getPublicImageUrl(imageUrl) {
+async function getPublicImageUrl(imageUrl, reqHost) {
   if (imageUrl.startsWith('http://') || imageUrl.startsWith('https://')) {
     return imageUrl;
   }
@@ -27,7 +25,8 @@ async function getPublicImageUrl(imageUrl) {
     const tempPath = path.join(os.tmpdir(), filename);
 
     await fs.promises.writeFile(tempPath, buffer);
-    return `${NEXTAUTH_URL}/api/temp-image/${filename}`;
+    const host = reqHost || process.env.NEXTAUTH_URL || 'http://localhost:3000';
+    return `${host}/api/temp-image/${filename}`;
   }
 
   return imageUrl;
@@ -54,20 +53,13 @@ export async function POST(req) {
     const { caption, hashtags, imageUrl, imagePrompt } = validation.data;
     const fullCaption = `${caption}\n\n${(hashtags || []).join(' ')}`.trim();
 
-    const db = await connectDB();
+    await connectDB();
 
-    let socialAccount;
-    if (db && db.isFallback) {
-      socialAccount = (global.inMemoryDb.socialAccounts || []).find(
-        (a) => a.userId === userId && a.platform === 'instagram' && a.isValid
-      );
-    } else {
-      socialAccount = await SocialAccount.findOne({
-        userId,
-        platform: 'instagram',
-        isValid: true,
-      }).select('+accessToken');
-    }
+    const socialAccount = await SocialAccount.findOne({
+      userId,
+      platform: 'instagram',
+      isValid: true,
+    }).select('+accessToken');
 
     if (!socialAccount) {
       return NextResponse.json(
@@ -77,7 +69,8 @@ export async function POST(req) {
     }
 
     const decryptedToken = decrypt(socialAccount.accessToken);
-    const publicUrl = await getPublicImageUrl(imageUrl);
+    const host = req.headers.get('host') ? `https://${req.headers.get('host')}` : process.env.NEXTAUTH_URL;
+    const publicUrl = await getPublicImageUrl(imageUrl, host);
 
     let publishResult;
     try {
@@ -87,23 +80,6 @@ export async function POST(req) {
         publicUrl,
         fullCaption
       );
-
-      if (db && db.isFallback) {
-        const newPost = {
-          _id: 'post_ig_' + Date.now(),
-          userId,
-          platform: 'instagram',
-          imageUrl: publicUrl,
-          imagePrompt: imagePrompt || '',
-          caption,
-          hashtags: hashtags || [],
-          status: 'success',
-          postId: publishResult.postId,
-          uploadedAt: new Date(),
-        };
-        global.inMemoryDb.posts.push(newPost);
-        return NextResponse.json({ message: 'Post published to Instagram successfully!', post: newPost });
-      }
 
       const newPost = await Post.create({
         userId,
@@ -120,26 +96,6 @@ export async function POST(req) {
       return NextResponse.json({ message: 'Post published to Instagram successfully!', post: newPost });
     } catch (igError) {
       console.error('Instagram publish error:', igError);
-
-      if (db && db.isFallback) {
-        const failedPost = {
-          _id: 'post_ig_' + Date.now(),
-          userId,
-          platform: 'instagram',
-          imageUrl: publicUrl,
-          imagePrompt: imagePrompt || '',
-          caption,
-          hashtags: hashtags || [],
-          status: 'failed',
-          errorMessage: igError.message || 'Instagram API upload failed',
-          uploadedAt: new Date(),
-        };
-        global.inMemoryDb.posts.push(failedPost);
-        return NextResponse.json(
-          { error: `Instagram upload failed: ${igError.message}`, post: failedPost },
-          { status: 500 }
-        );
-      }
 
       const failedPost = await Post.create({
         userId,
