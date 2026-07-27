@@ -29,14 +29,20 @@ export async function POST(req) {
     const { caption, hashtags, imageUrl, imagePrompt } = validation.data;
     const fullMessage = `${caption}\n\n${(hashtags || []).join(' ')}`.trim();
 
-    await connectDB();
+    const db = await connectDB();
 
-    // 2. Query MongoDB with mandatory { userId } rule
-    const socialAccount = await SocialAccount.findOne({
-      userId,
-      platform: 'facebook',
-      isValid: true,
-    }).select('+accessToken');
+    let socialAccount;
+    if (db && db.isFallback) {
+      socialAccount = (global.inMemoryDb.socialAccounts || []).find(
+        (a) => a.userId === userId && a.platform === 'facebook' && a.isValid
+      );
+    } else {
+      socialAccount = await SocialAccount.findOne({
+        userId,
+        platform: 'facebook',
+        isValid: true,
+      }).select('+accessToken');
+    }
 
     if (!socialAccount) {
       return NextResponse.json(
@@ -58,7 +64,23 @@ export async function POST(req) {
         fullMessage
       );
 
-      // Save success post to DB with mandatory userId isolation
+      if (db && db.isFallback) {
+        const newPost = {
+          _id: 'post_fb_' + Date.now(),
+          userId,
+          platform: 'facebook',
+          imageUrl,
+          imagePrompt: imagePrompt || '',
+          caption,
+          hashtags: hashtags || [],
+          status: 'success',
+          postId: publishResult.postId,
+          uploadedAt: new Date(),
+        };
+        global.inMemoryDb.posts.push(newPost);
+        return NextResponse.json({ message: 'Post published to Facebook successfully!', post: newPost });
+      }
+
       const newPost = await Post.create({
         userId,
         platform: 'facebook',
@@ -74,8 +96,27 @@ export async function POST(req) {
       return NextResponse.json({ message: 'Post published to Facebook successfully!', post: newPost });
     } catch (fbError) {
       console.error('Facebook publish error:', fbError);
-      
-      // Save failed post record to DB
+
+      if (db && db.isFallback) {
+        const failedPost = {
+          _id: 'post_fb_' + Date.now(),
+          userId,
+          platform: 'facebook',
+          imageUrl,
+          imagePrompt: imagePrompt || '',
+          caption,
+          hashtags: hashtags || [],
+          status: 'failed',
+          errorMessage: fbError.message || 'Facebook API upload failed',
+          uploadedAt: new Date(),
+        };
+        global.inMemoryDb.posts.push(failedPost);
+        return NextResponse.json(
+          { error: `Facebook upload failed: ${fbError.message}`, post: failedPost },
+          { status: 500 }
+        );
+      }
+
       const failedPost = await Post.create({
         userId,
         platform: 'facebook',

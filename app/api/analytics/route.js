@@ -8,7 +8,6 @@ import { fetchMetaInsights } from '@/lib/metaGraph';
 
 export const dynamic = 'force-dynamic';
 
-
 export async function GET(req) {
   try {
     const session = await getServerSession(authOptions);
@@ -17,56 +16,64 @@ export async function GET(req) {
     }
 
     const userId = session.user.id;
-    await connectDB();
+    const db = await connectDB();
 
-    // 1. Security Rule: Every query MUST include userId
-    const accounts = await SocialAccount.find({ userId, isValid: true }).select('+accessToken');
+    let accounts = [];
+    let analyticsHistory = [];
+    let recentPosts = [];
+    let recentComments = [];
 
-    // Sync live insights from Meta Graph API for each connected account
-    for (const account of accounts) {
-      try {
-        const decryptedToken = decrypt(account.accessToken);
-        const insights = await fetchMetaInsights(account.pageId, account.platform, decryptedToken);
+    if (db && db.isFallback) {
+      accounts = (global.inMemoryDb.socialAccounts || []).filter(
+        (a) => a.userId === userId && a.isValid
+      );
+      recentPosts = (global.inMemoryDb.posts || []).filter((p) => p.userId === userId).slice(-10);
+      recentComments = (global.inMemoryDb.commentReplies || []).filter((c) => c.userId === userId).slice(-5);
+      analyticsHistory = (global.inMemoryDb.analytics || []).filter((an) => an.userId === userId);
+    } else {
+      accounts = await SocialAccount.find({ userId, isValid: true }).select('+accessToken');
 
-        // Store daily analytics snapshot in MongoDB
-        const today = new Date();
-        today.setHours(0, 0, 0, 0);
+      // Sync live insights from Meta Graph API for each connected account
+      for (const account of accounts) {
+        try {
+          const decryptedToken = decrypt(account.accessToken);
+          const insights = await fetchMetaInsights(account.pageId, account.platform, decryptedToken);
 
-        await Analytics.findOneAndUpdate(
-          { userId, platform: account.platform, date: today },
-          {
-            userId,
-            platform: account.platform,
-            date: today,
-            metrics: insights,
-          },
-          { upsert: true, new: true }
-        );
-      } catch (err) {
-        console.error(`Error syncing analytics for ${account.platform}:`, err.message);
+          const today = new Date();
+          today.setHours(0, 0, 0, 0);
+
+          await Analytics.findOneAndUpdate(
+            { userId, platform: account.platform, date: today },
+            {
+              userId,
+              platform: account.platform,
+              date: today,
+              metrics: insights,
+            },
+            { upsert: true, new: true }
+          );
+        } catch (err) {
+          console.error(`Error syncing analytics for ${account.platform}:`, err.message);
+        }
       }
+
+      const sevenDaysAgo = new Date();
+      sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+
+      analyticsHistory = await Analytics.find({
+        userId,
+        date: { $gte: sevenDaysAgo },
+      }).sort({ date: 1 });
+
+      recentPosts = await Post.find({ userId })
+        .sort({ uploadedAt: -1 })
+        .limit(10);
+
+      recentComments = await CommentReply.find({ userId })
+        .sort({ createdAt: -1 })
+        .limit(5);
     }
 
-    // Fetch historical analytics (last 7 days)
-    const sevenDaysAgo = new Date();
-    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
-
-    const analyticsHistory = await Analytics.find({
-      userId,
-      date: { $gte: sevenDaysAgo },
-    }).sort({ date: 1 });
-
-    // Fetch user recent posts
-    const recentPosts = await Post.find({ userId })
-      .sort({ uploadedAt: -1 })
-      .limit(10);
-
-    // Fetch recent comment replies
-    const recentComments = await CommentReply.find({ userId })
-      .sort({ createdAt: -1 })
-      .limit(5);
-
-    // Calculate aggregated metrics
     let totalFollowers = 0;
     let totalLikes = 0;
     let totalComments = 0;
@@ -86,7 +93,6 @@ export async function GET(req) {
       totalEngagement += item.metrics?.engagement || 0;
     });
 
-    // Format chart data (7-day timeline)
     const dateMap = new Map();
     for (let i = 6; i >= 0; i--) {
       const d = new Date();

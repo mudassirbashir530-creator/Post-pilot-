@@ -33,12 +33,18 @@ export async function POST(req) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    await connectDB();
+    const userId = session.user.id;
+    const db = await connectDB();
     
-    // Security Rule: Every query MUST include userId
-    const accounts = await SocialAccount.find({ userId: session.user.id })
-      .select('-accessToken')
-      .sort({ connectedAt: -1 });
+    let accounts = [];
+
+    if (db && db.isFallback) {
+      accounts = (global.inMemoryDb.socialAccounts || []).filter((a) => a.userId === userId);
+    } else {
+      accounts = await SocialAccount.find({ userId })
+        .select('-accessToken')
+        .sort({ connectedAt: -1 });
+    }
 
     return NextResponse.json({ accounts });
   } catch (error) {
