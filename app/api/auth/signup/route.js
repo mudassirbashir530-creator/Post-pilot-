@@ -20,9 +20,44 @@ export async function POST(req) {
     const { name, email, password } = validation.data;
     const lowerEmail = email.toLowerCase().trim();
 
-    await connectDB();
+    const db = await connectDB();
 
-    // 2. Check for existing user
+    // In-Memory Fallback DB Path
+    if (db && db.isFallback) {
+      const existingUser = global.inMemoryDb.users.find((u) => u.email === lowerEmail);
+      if (existingUser) {
+        return NextResponse.json(
+          { error: 'An account with this email address already exists' },
+          { status: 400 }
+        );
+      }
+
+      const passwordHash = await bcrypt.hash(password, 10);
+      const newUser = {
+        _id: 'user_' + Date.now(),
+        name,
+        email: lowerEmail,
+        passwordHash,
+        isActive: true,
+        createdAt: new Date(),
+      };
+
+      global.inMemoryDb.users.push(newUser);
+
+      return NextResponse.json(
+        {
+          message: 'Account created successfully',
+          user: {
+            id: newUser._id,
+            name: newUser.name,
+            email: newUser.email,
+          },
+        },
+        { status: 201 }
+      );
+    }
+
+    // Mongoose DB Path
     const existingUser = await User.findOne({ email: lowerEmail });
     if (existingUser) {
       return NextResponse.json(
@@ -31,7 +66,6 @@ export async function POST(req) {
       );
     }
 
-    // 3. Hash Password & Create User
     const passwordHash = await bcrypt.hash(password, 10);
     const newUser = await User.create({
       name,
@@ -54,7 +88,7 @@ export async function POST(req) {
   } catch (error) {
     console.error('Signup error:', error);
     return NextResponse.json(
-      { error: 'An unexpected error occurred during signup' },
+      { error: error.message || 'An unexpected error occurred during signup' },
       { status: 500 }
     );
   }

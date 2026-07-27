@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { signIn } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { Lock, Mail, ArrowRight, AlertCircle, RefreshCw } from 'lucide-react';
+import { Lock, Mail, ArrowRight, AlertCircle, RefreshCw, Sparkles } from 'lucide-react';
 
 export default function LoginPage() {
   const router = useRouter();
@@ -12,6 +12,12 @@ export default function LoginPage() {
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState(null);
+
+  const fillDemoCredentials = () => {
+    setEmail('demo@postpilot.app');
+    setPassword('password123');
+    setErrorMsg(null);
+  };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -107,6 +113,15 @@ export default function LoginPage() {
             )}
           </button>
         </form>
+
+        <button
+          type="button"
+          onClick={fillDemoCredentials}
+          className="w-full mt-3 py-2.5 rounded-xl bg-slate-800/60 hover:bg-slate-800 text-xs font-semibold text-indigo-300 border border-indigo-500/20 flex items-center justify-center gap-2 transition-all"
+        >
+          <Sparkles className="w-3.5 h-3.5 text-indigo-400" />
+          <span>Fill Demo Credentials (1-Click Login)</span>
+        </button>
 
         <div className="mt-8 text-center text-xs text-slate-400">
           Don't have a PostPilot account?{' '}

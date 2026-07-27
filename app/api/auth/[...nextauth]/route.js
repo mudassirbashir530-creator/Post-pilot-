@@ -17,22 +17,34 @@ export const authOptions = {
           throw new Error('Email and password are required');
         }
 
-        await connectDB();
-        const user = await User.findOne({ email: credentials.email.toLowerCase().trim() });
+        const lowerEmail = credentials.email.toLowerCase().trim();
+        const db = await connectDB();
 
-        if (!user || !user.isActive) {
+        let userFound = null;
+
+        if (db && db.isFallback) {
+          userFound = global.inMemoryDb.users.find((u) => u.email === lowerEmail);
+        } else {
+          try {
+            userFound = await User.findOne({ email: lowerEmail });
+          } catch (e) {
+            userFound = global.inMemoryDb.users.find((u) => u.email === lowerEmail);
+          }
+        }
+
+        if (!userFound || !userFound.isActive) {
           throw new Error('Invalid email or password');
         }
 
-        const isPasswordValid = await bcrypt.compare(credentials.password, user.passwordHash);
+        const isPasswordValid = await bcrypt.compare(credentials.password, userFound.passwordHash);
         if (!isPasswordValid) {
           throw new Error('Invalid email or password');
         }
 
         return {
-          id: user._id.toString(),
-          email: user.email,
-          name: user.name,
+          id: userFound._id ? userFound._id.toString() : 'demo_id',
+          email: userFound.email,
+          name: userFound.name,
         };
       },
     }),
